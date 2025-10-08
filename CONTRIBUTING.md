@@ -63,4 +63,4 @@ Running `pre-commit run --all-files` before pushing is a great sanity check.
 3. Ensure all linters and hooks pass.
 4. Open a pull request with context about the problem you're solving and how you validated it.
 
-Maintainers will review your proposal as soon as possible. Thanks again for contributing!
+Thanks again for contributing!
