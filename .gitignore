@@ -3,6 +3,7 @@ bin/
 dist/
 coverage.out
 *.test
+panoptes
 # Rust
 target/
 Cargo.lock
