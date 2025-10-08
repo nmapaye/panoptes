@@ -1,0 +1,15 @@
+id: AWS-TRUST-001
+title: AssumeRole via permissive trust
+description: Role trust policy allows broad principals without restrictive conditions.
+preconditions:
+  - no_mfa_required
+  - principal_in_org_optional
+pattern:
+  requires:
+    - action: "sts:AssumeRole"
+    - trust_policy: "Principal:'*' OR missing aws:PrincipalOrgID"
+goal: principal_obtains_admin
+remediation:
+  - add_condition: "aws:PrincipalOrgID == <org_id>"
+  - add_condition: "aws:MultiFactorAuthPresent == true"
+  - restrict_principal: "<specific_arns>"

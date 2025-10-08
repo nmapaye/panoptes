@@ -1,0 +1,29 @@
+{
+  "version": "0.0.1",
+  "created": "2025-10-08T16:37:20.656106Z",
+  "nodes": [
+    {
+      "id": "u:alice",
+      "type": "Principal",
+      "name": "alice"
+    },
+    {
+      "id": "r:AdminRole",
+      "type": "Role",
+      "name": "AdminRole"
+    }
+  ],
+  "edges": [
+    {
+      "from": "u:alice",
+      "to": "r:AdminRole",
+      "type": "CanAssume",
+      "attrs": {
+        "condition": "stub"
+      }
+    }
+  ],
+  "meta": {
+    "source": "state.json"
+  }
+}

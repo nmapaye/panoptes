@@ -1,0 +1,16 @@
+# Go
+bin/
+dist/
+coverage.out
+*.test
+# Rust
+target/
+Cargo.lock
+# Node
+node_modules/
+ui/node_modules/
+ui/dist/
+# IDE
+.vscode/
+.idea/
+.DS_Store

@@ -1,0 +1,13 @@
+{
+  "findings": [
+    {
+      "id": "F-0001",
+      "title": "Demo path to AdminRole",
+      "steps": [
+        "u:alice -> CanAssume -> r:AdminRole"
+      ],
+      "score": 0.92,
+      "target": "r:AdminRole"
+    }
+  ]
+}
