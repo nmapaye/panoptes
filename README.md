@@ -6,5 +6,5 @@ Multi-cloud IAM attack-path finder with auto-remediation diffs. Currently for de
 - `internal/*` — Go packages (IO, CLI handlers).
 - `engine` — Rust path engine (JSON in/out).
 - `rules/aws` — Rule pack stubs.
-- `ui` — Minimal React UI to visualize findings.
+- `ui` — React UI to visualize findings.
 - `infra/demo/terraform` — Synthetic misconfig estate (stub).
