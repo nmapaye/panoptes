@@ -8,7 +8,7 @@ NPX := npx
 all: cli engine ui
 
 cli:
-	@cd cmd/panoptes && $(GO) build -ldflags "-X github.com/yourname/panoptes/internal/cli.Version=$$(git rev-parse --short HEAD 2>/dev/null || echo dev)" -o ../../bin/panoptes
+	@cd cmd/panoptes && $(GO) build -ldflags "-X github.com/nmapaye/panoptes/internal/cli.Version=$$(git rev-parse --short HEAD 2>/dev/null || echo dev)" -o ../../bin/panoptes
 
 engine:
 	@cd engine && $(CARGO) build

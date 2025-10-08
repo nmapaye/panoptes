@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/yourname/panoptes/internal/cli"
+	"github.com/nmapaye/panoptes/internal/cli"
 )
 
 func main() {
