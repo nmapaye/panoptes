@@ -8,24 +8,104 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-go@v5
-        with: { go-version: '1.22' }
-      - run: go mod download
-      - run: make cli
-      - run: go test ./...
+        with:
+          go-version: "1.22"
+          cache: true
+
+      - name: Cache Go build cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/go-build
+          key: ${{ runner.os }}-go-build-${{ hashFiles('go.sum') }}
+          restore-keys: ${{ runner.os }}-go-build-
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.58.1
+          args: ./...
+
+      - name: Run Go tests
+        run: go test ./...
+
+      - name: Build CLI
+        run: make cli
+
+      - name: Upload CLI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: panoptes-cli-${{ github.sha }}
+          path: bin/panoptes
+          if-no-files-found: error
 
   rust:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --manifest-path engine/Cargo.toml
-      - run: cargo test --manifest-path engine/Cargo.toml
+        with:
+          components: clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git
+            engine/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('engine/Cargo.lock', 'engine/Cargo.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Cargo clippy
+        run: cargo clippy --manifest-path engine/Cargo.toml --all-targets --all-features -- -D warnings
+
+      - name: Cargo tests
+        run: cargo test --manifest-path engine/Cargo.toml
+
+      - name: Cargo build (release)
+        run: cargo build --manifest-path engine/Cargo.toml --release
+
+      - name: Upload engine artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: panoptes-engine-${{ github.sha }}
+          path: engine/target/release/panoptes-engine
+          if-no-files-found: error
 
   ui:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
-        with: { node-version: '20' }
-      - run: cd ui && npm ci && npm run build
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Prettier check
+        run: npx prettier --check .
+
+      - name: Build UI
+        run: npm run build
+
+      - name: Upload UI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: panoptes-ui-${{ github.sha }}
+          path: ui/dist
+          if-no-files-found: error

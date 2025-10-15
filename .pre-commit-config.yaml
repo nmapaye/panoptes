@@ -1,16 +1,13 @@
 repos:
   - repo: https://github.com/golangci/golangci-lint
-    rev: v1.58.1
+    rev: v2.5.0
     hooks:
-      - id: golangci-lint
-        args: ["run", "./..."]
-        pass_filenames: false
+      - id: golangci-lint-full
 
   - repo: https://github.com/pre-commit/mirrors-prettier
-    rev: v3.3.2
+    rev: v3.0.3
     hooks:
       - id: prettier
-        args: ["--check"]
         files: "\\.(ts|tsx|js|jsx|json|css|scss|md|yaml|yml)$"
 
   - repo: local

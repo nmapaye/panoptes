@@ -1,0 +1,124 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  attestations: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git
+            engine/target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('engine/Cargo.lock', 'engine/Cargo.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-release-
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Prepare workspace
+        run: mkdir -p dist
+
+      - name: Go dependencies
+        run: go mod download
+
+      - name: Build Go CLI (linux-amd64 static)
+        env:
+          CGO_ENABLED: 0
+          GOOS: linux
+          GOARCH: amd64
+        run: >
+          go build -trimpath -ldflags "-s -w -X github.com/nmapaye/panoptes/internal/cli.Version=${VERSION}"
+          -o dist/panoptes-cli-${VERSION}-linux-amd64 ./cmd/panoptes
+
+      - name: Build Rust engine (linux-amd64 static)
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: |
+          cargo build --manifest-path engine/Cargo.toml --release --target x86_64-unknown-linux-musl
+          cp engine/target/x86_64-unknown-linux-musl/release/panoptes-engine dist/panoptes-engine-${VERSION}-linux-amd64
+
+      - name: Install UI dependencies
+        working-directory: ui
+        run: npm ci
+
+      - name: Build UI bundle
+        working-directory: ui
+        run: npm run build
+
+      - name: Package UI bundle
+        run: tar -czf dist/panoptes-ui-${VERSION}.tar.gz -C ui dist
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          output-format: spdx-json
+          output-file: dist/panoptes-sbom-${{ env.VERSION }}.spdx.json
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum \
+            panoptes-cli-${VERSION}-linux-amd64 \
+            panoptes-engine-${VERSION}-linux-amd64 \
+            panoptes-ui-${VERSION}.tar.gz \
+            panoptes-sbom-${VERSION}.spdx.json > SHA256SUMS
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: panoptes-release-${{ github.ref_name }}
+          path: dist/**
+
+      - name: Generate provenance
+        uses: actions/attest@v1
+        with:
+          subject-path: |
+            dist/panoptes-cli-${{ env.VERSION }}-linux-amd64
+            dist/panoptes-engine-${{ env.VERSION }}-linux-amd64
+            dist/panoptes-ui-${{ env.VERSION }}.tar.gz
+            dist/panoptes-sbom-${{ env.VERSION }}.spdx.json
+            dist/SHA256SUMS
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: dist/*

@@ -1,29 +1,51 @@
 {
-  "version": "0.0.1",
-  "created": "2025-10-08T16:37:20.656106Z",
+  "schema_version": "1.0.0",
+  "created": "2025-10-15T05:07:18.906463Z",
   "nodes": [
     {
-      "id": "u:alice",
+      "id": "u:ci-bot",
       "type": "Principal",
-      "name": "alice"
+      "name": "arn:aws:iam::123456789012:user/ci-bot"
     },
     {
       "id": "r:AdminRole",
       "type": "Role",
-      "name": "AdminRole"
+      "name": "arn:aws:iam::123456789012:role/AdminRole"
     }
   ],
   "edges": [
     {
-      "from": "u:alice",
+      "from": "u:ci-bot",
       "to": "r:AdminRole",
       "type": "CanAssume",
+      "preconditions": ["sts:AssumeRole"],
       "attrs": {
-        "condition": "stub"
+        "principal_arn": "arn:aws:iam::123456789012:role/PanoptesBuilder",
+        "required_conditions": {
+          "externalId": "panoptes-prod",
+          "principalOrgID": "o-2a1b2c3d4e",
+          "principalTags": {
+            "Team": ["Security", "Platform"]
+          },
+          "requireMFA": true,
+          "resourceTags": {
+            "PrivEscalation": "deny"
+          },
+          "sourceIdentity": "panoptes",
+          "sourceIpCidrs": ["203.0.113.0/24", "198.51.100.0/24"],
+          "sourceVpce": ["vpce-0f00ba11cafe12345"]
+        },
+        "trust_policy_sid": "PanoptesTrust"
       }
     }
   ],
   "meta": {
-    "source": "state.json"
+    "deny_esc_policy_sid": "DenyEscalationOpsWithoutMFAOrTag",
+    "principal_tags_needed": ["Security", "Platform"],
+    "require_mfa_globally": true,
+    "resource_tag_guard": {
+      "PrivEscalation": "deny"
+    },
+    "state_ref": "state.json"
   }
 }

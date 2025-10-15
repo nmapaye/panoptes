@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nmapaye/panoptes/schemas/graph.schema.json",
+  "title": "Panoptes Access Graph",
+  "type": "object",
+  "required": ["schema_version", "created", "nodes", "edges"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^1\\.\\d+\\.\\d+$",
+      "description": "Semantic version of the access graph schema."
+    },
+    "created": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source": {
+      "type": "string",
+      "description": "Optional identifier describing how the graph was produced."
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/node"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/edge"
+      },
+      "minItems": 1
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "node": {
+      "type": "object",
+      "required": ["id", "type"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z]+:[A-Za-z0-9._@/-]+$",
+          "description": "Fully-qualified identifier with a namespace prefix."
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "Principal",
+            "Role",
+            "Group",
+            "Policy",
+            "PermissionSet",
+            "Resource",
+            "Service",
+            "Condition"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string",
+          "description": "Optional scope such as account ID or region."
+        },
+        "attrs": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "edge": {
+      "type": "object",
+      "required": ["from", "to", "type"],
+      "properties": {
+        "from": {
+          "type": "string",
+          "pattern": "^[a-z]+:[A-Za-z0-9._@/-]+$"
+        },
+        "to": {
+          "type": "string",
+          "pattern": "^[a-z]+:[A-Za-z0-9._@/-]+$"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "CanAssume",
+            "AttachedPolicy",
+            "TransitiveRole",
+            "PolicyGrant",
+            "ConditionBound",
+            "Reachability",
+            "DataAccess"
+          ]
+        },
+        "preconditions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]+:[A-Za-z0-9*:/.-]+$"
+          },
+          "uniqueItems": true
+        },
+        "attrs": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "weight": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

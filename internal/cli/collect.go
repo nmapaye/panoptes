@@ -9,11 +9,12 @@ import (
 )
 
 type StateSnapshot struct {
-	Provider string    `json:"provider"`
-	OrgID    string    `json:"org_id"`
-	Ts       time.Time `json:"timestamp"`
-	Accounts []string  `json:"accounts"`
-	Notes    string    `json:"notes"`
+	SchemaVersion string    `json:"schema_version"`
+	Provider      string    `json:"provider"`
+	OrgID         string    `json:"org_id"`
+	Ts            time.Time `json:"timestamp"`
+	Accounts      []string  `json:"accounts"`
+	Notes         string    `json:"notes"`
 }
 
 var (
@@ -31,18 +32,19 @@ var collectAWS = &cobra.Command{
 	Short: "Collect AWS Organization snapshot (stub)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		s := StateSnapshot{
-			Provider: "aws",
-			OrgID:    orgID,
-			Ts:       time.Now().UTC(),
-			Accounts: []string{"111111111111", "222222222222"},
-			Notes:    "stub snapshot for bootstrap",
+			SchemaVersion: "1.0.0",
+			Provider:      "aws",
+			OrgID:         orgID,
+			Ts:            time.Now().UTC(),
+			Accounts:      []string{"111111111111", "222222222222"},
+			Notes:         "stub snapshot for bootstrap",
 		}
 		b, _ := json.MarshalIndent(s, "", "  ")
 		if outFile == "" {
 			outFile = "state.json"
 		}
 		mustWrite(outFile, b)
-		fmt.Fprintf(cmd.OutOrStdout(), "wrote %s\n", outFile)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "wrote %s\n", outFile)
 		return nil
 	},
 }

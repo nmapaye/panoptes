@@ -1,15 +1,19 @@
 # Panoptes
+
 Multi-cloud IAM attack-path finder with auto-remediation diffs. Currently for development and personal use only; NOT PRODUCTION SAFE.
 
 ## Layout
+
 - `cmd/panoptes` — Go CLI.
 - `internal/*` — Go packages (IO, CLI handlers).
 - `engine` — Rust path engine (JSON in/out).
 - `rules/aws` — Rule pack stubs.
 - `ui` — Minimal React UI to visualize findings.
 - `infra/demo/terraform` — Synthetic misconfig estate (stub).
+- `docs/graph-model.md` — Canonical node/edge taxonomy and JSON Schema pointers.
 
 ## Quickstart
+
 The project expects Go 1.22, Rust stable, and Node.js 20 (see `.tool-versions` for exact pins).
 
 ```bash

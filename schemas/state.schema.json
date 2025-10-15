@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nmapaye/panoptes/schemas/state.schema.json",
+  "title": "Panoptes State Snapshot",
+  "type": "object",
+  "required": ["schema_version", "provider", "org_id", "timestamp", "accounts"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^1\\.\\d+\\.\\d+$",
+      "description": "Semantic version of the state schema."
+    },
+    "provider": {
+      "type": "string",
+      "enum": ["aws"]
+    },
+    "org_id": {
+      "type": "string",
+      "pattern": "^\\d{12}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "accounts": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^\\d{12}$"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "regions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "notes": {
+      "type": "string"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

@@ -10,11 +10,11 @@ import (
 )
 
 type Graph struct {
-	Version string        `json:"version"`
-	Created time.Time     `json:"created"`
-	Nodes   []GraphNode   `json:"nodes"`
-	Edges   []GraphEdge   `json:"edges"`
-	Meta    map[string]any `json:"meta"`
+	SchemaVersion string         `json:"schema_version"`
+	Created       time.Time      `json:"created"`
+	Nodes         []GraphNode    `json:"nodes"`
+	Edges         []GraphEdge    `json:"edges"`
+	Meta          map[string]any `json:"meta"`
 }
 type GraphNode struct {
 	ID   string `json:"id"`
@@ -22,10 +22,11 @@ type GraphNode struct {
 	Name string `json:"name"`
 }
 type GraphEdge struct {
-	From  string         `json:"from"`
-	To    string         `json:"to"`
-	Type  string         `json:"type"`
-	Attrs map[string]any `json:"attrs,omitempty"`
+	From          string         `json:"from"`
+	To            string         `json:"to"`
+	Type          string         `json:"type"`
+	Preconditions []string       `json:"preconditions,omitempty"`
+	Attrs         map[string]any `json:"attrs,omitempty"`
 }
 
 var normalizeCmd = &cobra.Command{
@@ -37,22 +38,48 @@ var normalizeCmd = &cobra.Command{
 		if _, err := os.Stat(statePath); err != nil {
 			return err
 		}
+		preconditions := map[string]any{
+			"principalOrgID": "o-2a1b2c3d4e",
+			"requireMFA":     true,
+			"externalId":     "panoptes-prod",
+			"sourceVpce":     []string{"vpce-0f00ba11cafe12345"},
+			"sourceIpCidrs":  []string{"203.0.113.0/24", "198.51.100.0/24"},
+			"principalTags":  map[string]any{"Team": []string{"Security", "Platform"}},
+			"resourceTags":   map[string]any{"PrivEscalation": "deny"},
+			"sourceIdentity": "panoptes",
+		}
 		g := Graph{
-			Version: "0.0.1",
-			Created: time.Now().UTC(),
+			SchemaVersion: "1.0.0",
+			Created:       time.Now().UTC(),
 			Nodes: []GraphNode{
-				{ID: "u:alice", Type: "Principal", Name: "alice"},
-				{ID: "r:AdminRole", Type: "Role", Name: "AdminRole"},
+				{ID: "u:ci-bot", Type: "Principal", Name: "arn:aws:iam::123456789012:user/ci-bot"},
+				{ID: "r:AdminRole", Type: "Role", Name: "arn:aws:iam::123456789012:role/AdminRole"},
 			},
 			Edges: []GraphEdge{
-				{From: "u:alice", To: "r:AdminRole", Type: "CanAssume", Attrs: map[string]any{"condition": "stub"}},
+				{
+					From:          "u:ci-bot",
+					To:            "r:AdminRole",
+					Type:          "CanAssume",
+					Preconditions: []string{"sts:AssumeRole"},
+					Attrs: map[string]any{
+						"required_conditions": preconditions,
+						"trust_policy_sid":    "PanoptesTrust",
+						"principal_arn":       "arn:aws:iam::123456789012:role/PanoptesBuilder",
+					},
+				},
 			},
-			Meta: map[string]any{"source": statePath},
+			Meta: map[string]any{
+				"state_ref":             statePath,
+				"resource_tag_guard":    map[string]string{"PrivEscalation": "deny"},
+				"deny_esc_policy_sid":   "DenyEscalationOpsWithoutMFAOrTag",
+				"require_mfa_globally":  true,
+				"principal_tags_needed": []string{"Security", "Platform"},
+			},
 		}
 		out := "graph.json" // human-readable for bootstrap
 		b, _ := json.MarshalIndent(g, "", "  ")
 		mustWrite(out, b)
-		fmt.Fprintf(cmd.OutOrStdout(), "wrote %s\n", out)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "wrote %s\n", out)
 		return nil
 	},
 }

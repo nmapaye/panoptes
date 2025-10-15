@@ -28,9 +28,9 @@ var showPathCmd = &cobra.Command{
 		}
 		for _, x := range f.Findings {
 			if x.ID == id {
-				fmt.Fprintln(cmd.OutOrStdout(), x.Title)
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), x.Title)
 				for i, s := range x.Steps {
-					fmt.Fprintf(cmd.OutOrStdout(), "%d) %s\n", i+1, s)
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%d) %s\n", i+1, s)
 				}
 				return nil
 			}
