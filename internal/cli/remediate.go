@@ -1,89 +1,98 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
-
-	"github.com/spf13/cobra"
+	"strings"
+	"time"
 )
 
-var remOut string
+func runRemediate(args []string, stdout, stderr io.Writer) error {
+	fs := newFlagSet("remediate", stderr)
+	outDir := fs.String("emit", "terraform_out", "output directory for remediation artifacts")
+	findingsPath := ""
+	if len(args) > 0 && args[0] != "" && args[0][0] != '-' {
+		findingsPath = args[0]
+		args = args[1:]
+	}
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if findingsPath == "" && fs.NArg() == 1 {
+		findingsPath = fs.Arg(0)
+	}
+	if findingsPath == "" || fs.NArg() > 1 {
+		return fmt.Errorf("usage: remediate <findings.json> [--emit terraform_out]")
+	}
+	var findings Findings
+	if err := readJSON(findingsPath, &findings); err != nil {
+		return err
+	}
+	if len(findings.Findings) == 0 {
+		_, _ = fmt.Fprintln(stdout, "no findings, nothing to remediate")
+		return nil
+	}
+	if err := os.MkdirAll(*outDir, 0755); err != nil {
+		return err
+	}
 
-var remediateCmd = &cobra.Command{
-	Use:   "remediate <findings.json>",
-	Short: "Generate remediation patches (stub Terraform)",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		findingsPath := args[0]
-		b, err := os.ReadFile(findingsPath)
-		if err != nil {
-			return err
-		}
-		var findings Findings
-		if err := json.Unmarshal(b, &findings); err != nil {
-			return err
-		}
-		if len(findings.Findings) == 0 {
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "no findings, nothing to remediate")
-			return nil
-		}
-		if remOut == "" {
-			remOut = "terraform"
-		}
-		if err := os.MkdirAll(remOut, 0755); err != nil {
-			return err
-		}
-		tf := `# Panoptes remediation plan for AdminRole trust policy
-terraform {
-  required_version = ">= 1.5.0"
+	plan := RemediationPlan{
+		SchemaVersion: "1.0.0",
+		GeneratedAt:   time.Now().UTC(),
+		Items:         make([]RemediationItem, 0, len(findings.Findings)),
+	}
+	hclBlocks := make([]string, 0, len(findings.Findings))
+	for _, finding := range findings.Findings {
+		hcl := buildTerraformPatch(finding)
+		plan.Items = append(plan.Items, RemediationItem{
+			FindingID: finding.ID,
+			Target:    finding.Target,
+			Summary:   finding.Remediation.Summary,
+			Kind:      finding.Remediation.Kind,
+			Steps:     append([]string(nil), finding.Remediation.Suggested...),
+			HCL:       hcl,
+		})
+		hclBlocks = append(hclBlocks, hcl)
+	}
+
+	if err := writeJSON(defaultOutputPath(*outDir, "remediation.json"), plan); err != nil {
+		return err
+	}
+	tf := strings.Join(hclBlocks, "\n\n")
+	mustWrite(defaultOutputPath(*outDir, "panoptes_patches.tf"), []byte(tf+"\n"))
+	_, _ = fmt.Fprintf(stdout, "wrote %s\n", filepath.Join(*outDir, "remediation.json"))
+	_, _ = fmt.Fprintf(stdout, "wrote %s\n", filepath.Join(*outDir, "panoptes_patches.tf"))
+	return nil
 }
 
-data "aws_iam_policy_document" "admin_role_trust" {
+func buildTerraformPatch(finding Finding) string {
+	evidence := finding.Evidence
+	roleName := stringFromAny(evidence["role_name"])
+	if roleName == "" {
+		roleName = finding.Target
+	}
+	orgID := stringFromAny(evidence["org_id"])
+	if orgID == "" {
+		if required, ok := evidence["required_conditions"].(map[string]any); ok {
+			orgID = stringFromAny(required["org_id"])
+		}
+	}
+	trustedPrincipal := stringFromAny(evidence["trusted_principal_arn"])
+	if trustedPrincipal == "" {
+		trustedPrincipal = "arn:aws:iam::<account-id>:role/restricted-principal"
+	}
+	resourceName := sanitizeResourceName(roleName)
+	return fmt.Sprintf(`# %s - %s
+data "aws_iam_policy_document" "%s_trust" {
   statement {
-    sid     = "PanoptesTrust"
+    sid     = "PanoptesGuardrail"
     actions = ["sts:AssumeRole"]
 
     principals {
       type        = "AWS"
-      identifiers = ["arn:aws:iam::123456789012:role/PanoptesBuilder"]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "aws:PrincipalOrgID"
-      values   = ["o-2a1b2c3d4e"]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "sts:ExternalId"
-      values   = ["panoptes-prod"]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "sts:SourceIdentity"
-      values   = ["panoptes"]
-    }
-
-    condition {
-      test     = "StringEqualsIfExists"
-      variable = "aws:SourceVpce"
-      values   = ["vpce-0f00ba11cafe12345"]
-    }
-
-    condition {
-      test     = "IpAddress"
-      variable = "aws:SourceIp"
-      values   = ["203.0.113.0/24", "198.51.100.0/24"]
-    }
-
-    condition {
-      test     = "StringEqualsIfExists"
-      variable = "aws:PrincipalTag/Team"
-      values   = ["Security", "Platform"]
+      identifiers = [%q]
     }
 
     condition {
@@ -91,66 +100,18 @@ data "aws_iam_policy_document" "admin_role_trust" {
       variable = "aws:MultiFactorAuthPresent"
       values   = ["true"]
     }
-  }
-}
-
-data "aws_iam_policy_document" "admin_role_guardrail" {
-  statement {
-    sid    = "DenyEscalationOpsWithoutMFAOrTag"
-    effect = "Deny"
-    actions = [
-      "iam:AttachUserPolicy",
-      "iam:AttachRolePolicy",
-      "iam:CreatePolicyVersion",
-      "iam:SetDefaultPolicyVersion",
-      "iam:PutUserPolicy",
-      "iam:PutRolePolicy",
-      "iam:UpdateAssumeRolePolicy",
-      "iam:PassRole",
-    ]
-    resources = ["*"]
 
     condition {
-      test     = "BoolIfExists"
-      variable = "aws:MultiFactorAuthPresent"
-      values   = ["false"]
-    }
-
-    condition {
-      test     = "StringNotEquals"
-      variable = "aws:PrincipalTag/AllowEscalation"
-      values   = ["true"]
+      test     = "StringEquals"
+      variable = "aws:PrincipalOrgID"
+      values   = [%q]
     }
   }
 }
 
-resource "aws_iam_role" "admin_role" {
-  name               = "AdminRole"
-  assume_role_policy = data.aws_iam_policy_document.admin_role_trust.json
-
-  tags = {
-    PrivEscalation = "deny"
-  }
+resource "aws_iam_role" "%s" {
+  name               = %q
+  assume_role_policy = data.aws_iam_policy_document.%s_trust.json
 }
-
-resource "aws_iam_policy" "admin_role_guardrail" {
-  name        = "panoptes-adminrole-guardrail"
-  description = "Denies privileged escalation operations unless MFA and AllowEscalation tag are present."
-  policy      = data.aws_iam_policy_document.admin_role_guardrail.json
-}
-
-resource "aws_iam_role_policy_attachment" "admin_role_guardrail" {
-  role       = aws_iam_role.admin_role.name
-  policy_arn = aws_iam_policy.admin_role_guardrail.arn
-}
-`
-		path := filepath.Join(remOut, "panoptes_patches.tf")
-		mustWrite(path, []byte(tf))
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "wrote %s\n", path)
-		return nil
-	},
-}
-
-func init() {
-	remediateCmd.Flags().StringVar(&remOut, "emit", "terraform", "output directory for patches")
+`, finding.ID, finding.Title, resourceName, trustedPrincipal, orgID, resourceName, roleName, resourceName)
 }

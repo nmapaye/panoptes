@@ -1,15 +1,13 @@
 id: AWS-TRUST-001
-title: AssumeRole via permissive trust
-description: Role trust policy allows broad principals without restrictive conditions.
-preconditions:
-  - no_mfa_required
-  - principal_in_org_optional
-pattern:
-  requires:
-    - action: "sts:AssumeRole"
-    - trust_policy: "Principal:'*' OR missing aws:PrincipalOrgID"
-goal: principal_obtains_admin
-remediation:
-  - add_condition: "aws:PrincipalOrgID == <org_id>"
-  - add_condition: "aws:MultiFactorAuthPresent == true"
-  - restrict_principal: "<specific_arns>"
+title: Wildcard assume-role trust without org and MFA guards
+description: Detect admin role trust relationships that allow broad principals without both organization restriction and MFA.
+match_type: CanAssume
+require_org_id: true
+require_mfa: true
+require_specific_principal: true
+severity: high
+remediation_kind: restrict_assume_role
+remediation_steps:
+  - Add an aws:PrincipalOrgID condition that matches the owning organization.
+  - Require aws:MultiFactorAuthPresent to be true.
+  - Replace wildcard trust with the approved principal ARN.

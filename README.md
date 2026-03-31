@@ -1,16 +1,16 @@
 # Panoptes
 
-Multi-cloud IAM attack-path finder with auto-remediation diffs. Currently for development and personal use only; NOT PRODUCTION SAFE.
+AWS IAM attack-path MVP with fixture-driven collection and Terraform remediation hints. Currently for development and personal use only; NOT PRODUCTION SAFE.
 
 ## Layout
 
 - `cmd/panoptes` — Go CLI.
-- `internal/*` — Go packages (IO, CLI handlers).
-- `engine` — Rust path engine (JSON in/out).
-- `rules/aws` — Rule pack stubs.
+- `internal/*` — Go packages for fixture ingestion, normalization, rule evaluation, and remediation.
+- `fixtures/aws` — Deterministic AWS state fixtures used by the collector and tests.
+- `rules/aws` — Active AWS rule pack consumed by `analyze`.
+- `engine` — Experimental Rust parity layer for graph analysis.
 - `ui` — Minimal React UI to visualize findings.
-- `infra/demo/terraform` — Synthetic misconfig estate (stub).
-- `docs/graph-model.md` — Canonical node/edge taxonomy and JSON Schema pointers.
+- `docs/graph-model.md` — Canonical node/edge taxonomy and schema pointers.
 
 ## Quickstart
 
@@ -21,14 +21,19 @@ The project expects Go 1.22, Rust stable, and Node.js 20 (see `.tool-versions` f
 git clone https://github.com/nmapaye/panoptes.git
 cd panoptes
 
-# bootstrap dependencies
-go mod tidy
-cargo build --manifest-path engine/Cargo.toml
-(cd ui && npm ci)
-
 # build everything via make
 make all
 
-# run the CLI (binary is placed in ./bin)
-./bin/panoptes --help
+# generate AWS MVP artifacts from the demo fixture
+mkdir -p out
+./bin/panoptes collect aws --fixture fixtures/aws/demo_state.json --org o-2a1b2c3d4e --out out/state.json
+./bin/panoptes normalize out/state.json --out out/graph.json
+./bin/panoptes analyze out/graph.json --rules rules/aws --out out/findings.json
+./bin/panoptes remediate out/findings.json --emit out/terraform
 ```
+
+## Current scope
+
+- The collector is fixture-driven for the AWS MVP. There is no live AWS API ingestion in this branch yet.
+- The active detector focuses on unsafe `sts:AssumeRole` trust on privileged roles.
+- Generated outputs live under `out/` and are intentionally not tracked in git.

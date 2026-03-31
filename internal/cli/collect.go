@@ -1,58 +1,54 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
+	"io"
 	"time"
-
-	"github.com/spf13/cobra"
 )
 
-type StateSnapshot struct {
-	SchemaVersion string    `json:"schema_version"`
-	Provider      string    `json:"provider"`
-	OrgID         string    `json:"org_id"`
-	Ts            time.Time `json:"timestamp"`
-	Accounts      []string  `json:"accounts"`
-	Notes         string    `json:"notes"`
-}
+func runCollect(args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 || args[0] != "aws" {
+		return fmt.Errorf("usage: collect aws --fixture <state.json> [--org <org-id>] [--out state.json]")
+	}
 
-var (
-	orgID   string
-	outFile string
-)
+	fs := newFlagSet("collect aws", stderr)
+	var (
+		fixture string
+		orgID   string
+		outFile string
+	)
+	fs.StringVar(&fixture, "fixture", "", "fixture state snapshot to ingest")
+	fs.StringVar(&orgID, "org", "", "expected AWS Organization ID")
+	fs.StringVar(&outFile, "out", "state.json", "output state file")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	if fixture == "" {
+		return fmt.Errorf("collect aws currently requires --fixture")
+	}
 
-var collectCmd = &cobra.Command{
-	Use:   "collect",
-	Short: "Collect cloud IAM inventory",
-}
-
-var collectAWS = &cobra.Command{
-	Use:   "aws",
-	Short: "Collect AWS Organization snapshot (stub)",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		s := StateSnapshot{
-			SchemaVersion: "1.0.0",
-			Provider:      "aws",
-			OrgID:         orgID,
-			Ts:            time.Now().UTC(),
-			Accounts:      []string{"111111111111", "222222222222"},
-			Notes:         "stub snapshot for bootstrap",
-		}
-		b, _ := json.MarshalIndent(s, "", "  ")
-		if outFile == "" {
-			outFile = "state.json"
-		}
-		mustWrite(outFile, b)
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "wrote %s\n", outFile)
-		return nil
-	},
-}
-
-func init() {
-	rootCmd.AddCommand(collectCmd)
-	collectCmd.AddCommand(collectAWS)
-	collectAWS.Flags().StringVar(&orgID, "org", "", "AWS Organization ID")
-	collectAWS.Flags().StringVar(&outFile, "out", "state.json", "output state file")
-	_ = collectAWS.MarkFlagRequired("org")
+	var snapshot StateSnapshot
+	if err := readJSON(fixture, &snapshot); err != nil {
+		return err
+	}
+	if orgID != "" && snapshot.OrgID != orgID {
+		return fmt.Errorf("fixture org %q does not match --org %q", snapshot.OrgID, orgID)
+	}
+	if orgID == "" {
+		orgID = snapshot.OrgID
+	}
+	snapshot.OrgID = orgID
+	snapshot.Timestamp = time.Now().UTC()
+	if snapshot.Metadata == nil {
+		snapshot.Metadata = map[string]any{}
+	}
+	snapshot.Metadata["collected_from_fixture"] = fixture
+	if err := validateState(snapshot); err != nil {
+		return err
+	}
+	if err := writeJSON(outFile, snapshot); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(stdout, "wrote %s\n", outFile)
+	return nil
 }

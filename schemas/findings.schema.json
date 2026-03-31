@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nmapaye/panoptes/schemas/findings.schema.json",
+  "title": "Panoptes Findings",
+  "type": "object",
+  "required": ["schema_version", "generated_at", "findings"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^1\\.\\d+\\.\\d+$"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "required": [
+        "id",
+        "rule_id",
+        "title",
+        "severity",
+        "score",
+        "target",
+        "remediation"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "rule_id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "severity": {
+          "type": "string"
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "score": {
+          "type": "number"
+        },
+        "target": {
+          "type": "string"
+        },
+        "target_name": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "remediation": {
+          "$ref": "#/$defs/remediation"
+        }
+      },
+      "additionalProperties": false
+    },
+    "remediation": {
+      "type": "object",
+      "required": ["kind", "summary"],
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "suggested": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

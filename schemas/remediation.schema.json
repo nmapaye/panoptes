@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nmapaye/panoptes/schemas/remediation.schema.json",
+  "title": "Panoptes Remediation Plan",
+  "type": "object",
+  "required": ["schema_version", "generated_at", "items"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^1\\.\\d+\\.\\d+$"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/item"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "item": {
+      "type": "object",
+      "required": ["finding_id", "target", "summary", "kind", "hcl"],
+      "properties": {
+        "finding_id": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "hcl": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

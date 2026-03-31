@@ -4,6 +4,11 @@ dist/
 coverage.out
 *.test
 panoptes
+out/
+state.json
+graph.json
+findings.json
+terraform_out/
 # Rust
 target/
 Cargo.lock

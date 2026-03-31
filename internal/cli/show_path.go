@@ -1,40 +1,37 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-
-	"github.com/spf13/cobra"
+	"io"
 )
 
-var showPathCmd = &cobra.Command{
-	Use:   "show-path <finding_id> [findings.json]",
-	Short: "Show a path by finding ID",
-	Args:  cobra.RangeArgs(1, 2),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		id := args[0]
-		in := "findings.json"
-		if len(args) == 2 {
-			in = args[1]
+func runShowPath(args []string, stdout, stderr io.Writer) error {
+	_ = stderr
+	if len(args) < 1 || len(args) > 2 {
+		return fmt.Errorf("usage: show-path <finding-id> [findings.json]")
+	}
+	id := args[0]
+	path := "findings.json"
+	if len(args) == 2 {
+		path = args[1]
+	}
+	var findings Findings
+	if err := readJSON(path, &findings); err != nil {
+		return err
+	}
+	for _, finding := range findings.Findings {
+		if finding.ID != id {
+			continue
 		}
-		b, err := os.ReadFile(in)
-		if err != nil {
-			return err
+		_, _ = fmt.Fprintln(stdout, finding.Title)
+		if len(finding.Steps) == 0 {
+			_, _ = fmt.Fprintln(stdout, "No explicit path was recorded for this finding.")
+			return nil
 		}
-		var f Findings
-		if err := json.Unmarshal(b, &f); err != nil {
-			return err
+		for idx, step := range finding.Steps {
+			_, _ = fmt.Fprintf(stdout, "%d) %s\n", idx+1, step)
 		}
-		for _, x := range f.Findings {
-			if x.ID == id {
-				_, _ = fmt.Fprintln(cmd.OutOrStdout(), x.Title)
-				for i, s := range x.Steps {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%d) %s\n", i+1, s)
-				}
-				return nil
-			}
-		}
-		return fmt.Errorf("finding %s not found", id)
-	},
+		return nil
+	}
+	return fmt.Errorf("finding %s not found", id)
 }

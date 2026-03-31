@@ -1,85 +1,145 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
+	"io"
 	"time"
-
-	"github.com/spf13/cobra"
 )
 
-type Graph struct {
-	SchemaVersion string         `json:"schema_version"`
-	Created       time.Time      `json:"created"`
-	Nodes         []GraphNode    `json:"nodes"`
-	Edges         []GraphEdge    `json:"edges"`
-	Meta          map[string]any `json:"meta"`
-}
-type GraphNode struct {
-	ID   string `json:"id"`
-	Type string `json:"type"`
-	Name string `json:"name"`
-}
-type GraphEdge struct {
-	From          string         `json:"from"`
-	To            string         `json:"to"`
-	Type          string         `json:"type"`
-	Preconditions []string       `json:"preconditions,omitempty"`
-	Attrs         map[string]any `json:"attrs,omitempty"`
+func runNormalize(args []string, stdout, stderr io.Writer) error {
+	fs := newFlagSet("normalize", stderr)
+	outFile := fs.String("out", "graph.json", "output graph file")
+	statePath := ""
+	if len(args) > 0 && args[0] != "" && args[0][0] != '-' {
+		statePath = args[0]
+		args = args[1:]
+	}
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if statePath == "" && fs.NArg() == 1 {
+		statePath = fs.Arg(0)
+	}
+	if statePath == "" || fs.NArg() > 1 {
+		return fmt.Errorf("usage: normalize <state.json> [--out graph.json]")
+	}
+	var snapshot StateSnapshot
+	if err := readJSON(statePath, &snapshot); err != nil {
+		return err
+	}
+	if err := validateState(snapshot); err != nil {
+		return err
+	}
+
+	graph := normalizeState(snapshot, statePath)
+	if err := writeJSON(*outFile, graph); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(stdout, "wrote %s\n", *outFile)
+	return nil
 }
 
-var normalizeCmd = &cobra.Command{
-	Use:   "normalize <state.json>",
-	Short: "Normalize snapshot into an analysis graph (stub)",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		statePath := args[0]
-		if _, err := os.Stat(statePath); err != nil {
-			return err
+func normalizeState(snapshot StateSnapshot, statePath string) Graph {
+	nodes := map[string]GraphNode{}
+	edges := make([]GraphEdge, 0)
+	identityLookup := map[string]GraphNode{}
+	identityNames := map[string]string{}
+	accountByIdentity := map[string]string{}
+
+	for _, account := range snapshot.Accounts {
+		for _, principal := range account.Principals {
+			node := GraphNode{
+				ID:    nodeID("u", principal.ID),
+				Type:  "Principal",
+				Name:  principal.ARN,
+				Scope: account.ID,
+				Attrs: map[string]any{"tags": principal.Tags, "account_name": account.Name},
+			}
+			nodes[node.ID] = node
+			identityLookup[principal.ID] = node
+			identityNames[node.ID] = principal.Name
+			accountByIdentity[node.ID] = account.ID
 		}
-		preconditions := map[string]any{
-			"principalOrgID": "o-2a1b2c3d4e",
-			"requireMFA":     true,
-			"externalId":     "panoptes-prod",
-			"sourceVpce":     []string{"vpce-0f00ba11cafe12345"},
-			"sourceIpCidrs":  []string{"203.0.113.0/24", "198.51.100.0/24"},
-			"principalTags":  map[string]any{"Team": []string{"Security", "Platform"}},
-			"resourceTags":   map[string]any{"PrivEscalation": "deny"},
-			"sourceIdentity": "panoptes",
+		for _, role := range account.Roles {
+			node := GraphNode{
+				ID:    nodeID("r", role.ID),
+				Type:  "Role",
+				Name:  role.ARN,
+				Scope: account.ID,
+				Attrs: map[string]any{
+					"admin":        role.Admin,
+					"role_name":    role.Name,
+					"account_name": account.Name,
+					"tags":         role.Tags,
+				},
+			}
+			nodes[node.ID] = node
+			identityLookup[role.ID] = node
+			identityNames[node.ID] = role.Name
+			accountByIdentity[node.ID] = account.ID
 		}
-		g := Graph{
-			SchemaVersion: "1.0.0",
-			Created:       time.Now().UTC(),
-			Nodes: []GraphNode{
-				{ID: "u:ci-bot", Type: "Principal", Name: "arn:aws:iam::123456789012:user/ci-bot"},
-				{ID: "r:AdminRole", Type: "Role", Name: "arn:aws:iam::123456789012:role/AdminRole"},
-			},
-			Edges: []GraphEdge{
-				{
-					From:          "u:ci-bot",
-					To:            "r:AdminRole",
+	}
+
+	for _, account := range snapshot.Accounts {
+		for _, role := range account.Roles {
+			roleNode := identityLookup[role.ID]
+			for _, trustedPrincipal := range role.TrustedPrincipals {
+				sourceNode, ok := identityLookup[trustedPrincipal]
+				if !ok {
+					sourceNode = GraphNode{
+						ID:    nodeID("u", "external/"+trustedPrincipal),
+						Type:  "Principal",
+						Name:  trustedPrincipal,
+						Scope: account.ID,
+					}
+					nodes[sourceNode.ID] = sourceNode
+					identityNames[sourceNode.ID] = trustedPrincipal
+					accountByIdentity[sourceNode.ID] = account.ID
+				}
+
+				edges = append(edges, GraphEdge{
+					From:          sourceNode.ID,
+					To:            roleNode.ID,
 					Type:          "CanAssume",
 					Preconditions: []string{"sts:AssumeRole"},
+					Weight:        1,
 					Attrs: map[string]any{
-						"required_conditions": preconditions,
-						"trust_policy_sid":    "PanoptesTrust",
-						"principal_arn":       "arn:aws:iam::123456789012:role/PanoptesBuilder",
+						"trusted_principal_ref": trustedPrincipal,
+						"trusted_principal_arn": sourceNode.Name,
+						"wildcard_principal":    role.Trust.WildcardPrincipal,
+						"account_id":            account.ID,
+						"role_name":             role.Name,
+						"required_conditions": map[string]any{
+							"org_id":          role.Trust.AllowedOrgID,
+							"require_mfa":     role.Trust.RequireMFA,
+							"external_id":     role.Trust.ExternalID,
+							"source_identity": role.Trust.SourceIdentity,
+							"principal_tags":  role.Trust.PrincipalTags,
+							"resource_tags":   role.Trust.ResourceTags,
+							"source_vpces":    role.Trust.SourceVPCEs,
+							"source_ip_cidrs": role.Trust.SourceIPCidrs,
+						},
 					},
-				},
-			},
-			Meta: map[string]any{
-				"state_ref":             statePath,
-				"resource_tag_guard":    map[string]string{"PrivEscalation": "deny"},
-				"deny_esc_policy_sid":   "DenyEscalationOpsWithoutMFAOrTag",
-				"require_mfa_globally":  true,
-				"principal_tags_needed": []string{"Security", "Platform"},
-			},
+				})
+			}
 		}
-		out := "graph.json" // human-readable for bootstrap
-		b, _ := json.MarshalIndent(g, "", "  ")
-		mustWrite(out, b)
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "wrote %s\n", out)
-		return nil
-	},
+	}
+
+	nodeList := make([]GraphNode, 0, len(nodes))
+	for _, key := range sortedKeys(nodes) {
+		nodeList = append(nodeList, nodes[key])
+	}
+
+	return Graph{
+		SchemaVersion: "1.1.0",
+		Created:       time.Now().UTC(),
+		Source:        "panoptes normalize aws",
+		Nodes:         nodeList,
+		Edges:         edges,
+		Meta: map[string]any{
+			"provider":  snapshot.Provider,
+			"org_id":    snapshot.OrgID,
+			"state_ref": statePath,
+		},
+	}
 }

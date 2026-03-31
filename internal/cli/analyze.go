@@ -1,174 +1,128 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-
-	"github.com/spf13/cobra"
+	"io"
+	"strings"
+	"time"
 )
 
-var (
-	rulesDir    string
-	maxDepth    int
-	pathsFlag   bool
-	outFindings string
-)
+func runAnalyze(args []string, stdout, stderr io.Writer) error {
+	fs := newFlagSet("analyze", stderr)
+	rulesDir := fs.String("rules", "rules/aws", "rules directory")
+	maxDepth := fs.Int("max-depth", 6, "maximum path search depth")
+	includePaths := fs.Bool("paths", true, "include explicit paths in findings")
+	outFile := fs.String("out", "findings.json", "output findings file")
+	graphPath := ""
+	if len(args) > 0 && args[0] != "" && args[0][0] != '-' {
+		graphPath = args[0]
+		args = args[1:]
+	}
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if graphPath == "" && fs.NArg() == 1 {
+		graphPath = fs.Arg(0)
+	}
+	if graphPath == "" || fs.NArg() > 1 {
+		return fmt.Errorf("usage: analyze <graph.json> [--rules rules/aws] [--paths=true] [--max-depth 6] [--out findings.json]")
+	}
+	if *maxDepth < 1 {
+		return fmt.Errorf("--max-depth must be at least 1")
+	}
+	var graph Graph
+	if err := readJSON(graphPath, &graph); err != nil {
+		return err
+	}
+	rules, err := loadRules(*rulesDir)
+	if err != nil {
+		return err
+	}
 
-type Finding struct {
-	ID     string   `json:"id"`
-	Title  string   `json:"title"`
-	Steps  []string `json:"steps"`
-	Score  float64  `json:"score"`
-	Target string   `json:"target"`
+	findings := Findings{
+		SchemaVersion: "1.0.0",
+		GeneratedAt:   time.Now().UTC(),
+		Findings:      analyzeGraph(graph, rules, *includePaths),
+	}
+	if err := writeJSON(*outFile, findings); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(stdout, "wrote %s\n", *outFile)
+	return nil
 }
 
-type Findings struct {
-	Findings []Finding `json:"findings"`
-}
+func analyzeGraph(graph Graph, rules []DetectionRule, includePaths bool) []Finding {
+	nodeLookup := map[string]GraphNode{}
+	for _, node := range graph.Nodes {
+		nodeLookup[node.ID] = node
+	}
 
-type analysisGraph struct {
-	Edges []struct {
-		From     string         `json:"from"`
-		To       string         `json:"to"`
-		EdgeType string         `json:"type"`
-		Attrs    map[string]any `json:"attrs"`
-	} `json:"edges"`
-}
-
-var analyzeCmd = &cobra.Command{
-	Use:   "analyze <graph.json>",
-	Short: "Analyze graph for escalation paths (calls Rust engine; stub fallback)",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		graphPath := args[0]
-		if outFindings == "" {
-			outFindings = "findings.json"
+	findings := make([]Finding, 0)
+	counter := 1
+	for _, edge := range graph.Edges {
+		if edge.Type != "CanAssume" {
+			continue
 		}
-		enginePath := guessEngine()
-		if enginePath != "" {
-			c := exec.Command(enginePath, "--in", graphPath, "--out", outFindings, "--max-depth", fmt.Sprint(maxDepth))
-			c.Stdout = cmd.OutOrStdout()
-			c.Stderr = cmd.ErrOrStderr()
-			if err := c.Run(); err != nil {
-				return err
-			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "wrote %s\n", outFindings)
-			return nil
-		}
-		// Fallback stub that mirrors engine logic
-		gb, err := os.ReadFile(graphPath)
-		if err != nil {
-			return err
-		}
-		var g analysisGraph
-		if err := json.Unmarshal(gb, &g); err != nil {
-			return err
-		}
-		hasUnrestrictedPath := false
-		for _, e := range g.Edges {
-			if e.EdgeType != "CanAssume" || e.From != "u:ci-bot" || e.To != "r:AdminRole" {
+		requiredConditions, _ := edge.Attrs["required_conditions"].(map[string]any)
+		wildcard := boolFromAny(edge.Attrs["wildcard_principal"])
+		roleNode := nodeLookup[edge.To]
+		sourceNode := nodeLookup[edge.From]
+		admin := boolFromAny(roleNode.Attrs["admin"])
+		for _, rule := range rules {
+			if rule.MatchType != edge.Type {
 				continue
 			}
-			guardsSatisfied := false
-			if e.Attrs != nil {
-				if rc, ok := e.Attrs["required_conditions"].(map[string]any); ok {
-					requireMFA, _ := rc["requireMFA"].(bool)
-					externalID, _ := rc["externalId"].(string)
-					sourceIdentity, _ := rc["sourceIdentity"].(string)
-					guardsSatisfied = requireMFA &&
-						externalID == "panoptes-prod" &&
-						sourceIdentity == "panoptes"
-					if guardsSatisfied {
-						if rt, ok := rc["resourceTags"].(map[string]any); ok {
-							val, _ := rt["PrivEscalation"].(string)
-							guardsSatisfied = guardsSatisfied && val == "deny"
-						} else {
-							guardsSatisfied = false
-						}
-					}
-					if guardsSatisfied {
-						if pt, ok := rc["principalTags"].(map[string]any); ok {
-							if teamRaw, ok := pt["Team"]; ok {
-								switch t := teamRaw.(type) {
-								case []any:
-									var hasSecurity, hasPlatform bool
-									for _, v := range t {
-										if s, ok := v.(string); ok {
-											switch s {
-											case "Security":
-												hasSecurity = true
-											case "Platform":
-												hasPlatform = true
-											}
-										}
-									}
-									guardsSatisfied = guardsSatisfied && hasSecurity && hasPlatform
-								case []string:
-									var tags = map[string]bool{}
-									for _, s := range t {
-										switch s {
-										case "Security":
-											tags["Security"] = true
-										case "Platform":
-											tags["Platform"] = true
-										default:
-											// ignore other tags
-										}
-									}
-									guardsSatisfied = guardsSatisfied && tags["Security"] && tags["Platform"]
-								default:
-									guardsSatisfied = false
-								}
-							} else {
-								guardsSatisfied = false
-							}
-						} else {
-							guardsSatisfied = false
-						}
-					}
-				}
+			var reasons []string
+			if rule.RequireSpecificPrincipal && wildcard {
+				reasons = append(reasons, "trust policy allows a wildcard or overly broad principal")
 			}
-			if !guardsSatisfied {
-				hasUnrestrictedPath = true
-				break
+			if rule.RequireOrgID && stringFromAny(requiredConditions["org_id"]) == "" {
+				reasons = append(reasons, "trust policy is missing an aws:PrincipalOrgID restriction")
 			}
-		}
-		f := Findings{}
-		if hasUnrestrictedPath {
-			f.Findings = append(f.Findings, Finding{
-				ID:     "F-0001",
-				Title:  "AdminRole trust policy missing guardrails",
-				Steps:  []string{"u:ci-bot -> CanAssume -> r:AdminRole"},
-				Score:  0.92,
-				Target: "r:AdminRole",
+			if rule.RequireMFA && !boolFromAny(requiredConditions["require_mfa"]) {
+				reasons = append(reasons, "trust policy does not require MFA")
+			}
+			if len(reasons) == 0 {
+				continue
+			}
+
+			findingID := fmt.Sprintf("F-%04d", counter)
+			counter++
+			steps := []string{}
+			if includePaths {
+				steps = append(steps, fmt.Sprintf("%s -> %s -> %s", sourceNode.Name, edge.Type, roleNode.Name))
+			}
+			conditions := map[string]any{}
+			for key, value := range requiredConditions {
+				conditions[key] = value
+			}
+			accountID := stringFromAny(edge.Attrs["account_id"])
+			roleName := stringFromAny(edge.Attrs["role_name"])
+			findings = append(findings, Finding{
+				ID:         findingID,
+				RuleID:     rule.ID,
+				Title:      rule.Title,
+				Severity:   rule.Severity,
+				Steps:      steps,
+				Score:      severityScore(rule.Severity, admin),
+				Target:     edge.To,
+				TargetName: roleNode.Name,
+				Evidence: map[string]any{
+					"account_id":           accountID,
+					"role_name":            roleName,
+					"trusted_principal_arn": sourceNode.Name,
+					"wildcard_principal":   wildcard,
+					"required_conditions":  conditions,
+					"reason":               strings.Join(reasons, "; "),
+					"org_id":               graphMetaOrgID(graph),
+				},
+				Remediation: RemediationRef{
+					Kind:      rule.RemediationKind,
+					Summary:   strings.Join(reasons, "; "),
+					Suggested: append([]string(nil), rule.RemediationSteps...),
+				},
 			})
 		}
-		b, _ := json.MarshalIndent(f, "", "  ")
-		mustWrite(outFindings, b)
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "wrote %s (stub)\n", outFindings)
-		return nil
-	},
-}
-
-func init() {
-	analyzeCmd.Flags().StringVar(&rulesDir, "rules", "rules/aws", "rules directory")
-	analyzeCmd.Flags().IntVar(&maxDepth, "max-depth", 6, "maximum search depth")
-	analyzeCmd.Flags().BoolVar(&pathsFlag, "paths", true, "include explicit paths")
-	analyzeCmd.Flags().StringVar(&outFindings, "out", "findings.json", "output file")
-}
-
-func guessEngine() string {
-	candidates := []string{
-		filepath.FromSlash("engine/target/debug/panoptes-engine"),
-		"panoptes-engine",
 	}
-	for _, p := range candidates {
-		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() {
-			return p
-		}
-	}
-	return ""
+	return findings
 }
