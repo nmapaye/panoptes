@@ -37,3 +37,19 @@ mkdir -p out
 - The collector is fixture-driven for the AWS MVP. There is no live AWS API ingestion in this branch yet.
 - The active detector focuses on unsafe `sts:AssumeRole` trust on privileged roles.
 - Generated outputs live under `out/` and are intentionally not tracked in git.
+
+## Safety and review behavior
+
+`analyze --max-depth N` searches deterministic, cycle-free `CanAssume` paths up
+to `N` edges. Rule files are parsed as strict YAML, so unknown fields and
+duplicate rule IDs stop analysis instead of being ignored.
+
+`remediate` emits Terraform only when a finding contains a valid role name,
+organization ID, and specific principal ARN. Incomplete findings remain in
+`remediation.json` with `requires_review` and a reason, while the Terraform file
+contains no resource block for them. Generated Terraform is a review artifact,
+not an instruction to apply changes to an AWS account.
+
+The UI reads `findings.json` entirely in the browser. It validates schema 1.x,
+then provides severity counts, filtering, path details, evidence, and remediation
+notes without uploading the file.
