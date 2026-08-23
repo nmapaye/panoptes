@@ -33,5 +33,6 @@ clean:
 test:
 	@GOCACHE="$(GOCACHE)" GOPATH="$(GOPATH)" GOMODCACHE="$(GOMODCACHE)" $(GO) test ./...
 	@cd engine && $(CARGO) test
+	@cd ui && npm test
 	@cd ui && npm run type-check
 	@cd ui && npm run build

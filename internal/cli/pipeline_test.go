@@ -39,7 +39,7 @@ func TestAnalyzeGraphFindsOnlyTheUnsafeAdminTrust(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load rules: %v", err)
 	}
-	findings := analyzeGraph(graph, rules, true)
+	findings := analyzeGraph(graph, rules, true, 6)
 	if len(findings) != 1 {
 		t.Fatalf("expected 1 finding, got %d", len(findings))
 	}
@@ -59,7 +59,7 @@ func TestRemediateWritesDataDrivenTerraform(t *testing.T) {
 	}
 	findings := Findings{
 		SchemaVersion: "1.0.0",
-		Findings:      analyzeGraph(graph, rules, true),
+		Findings:      analyzeGraph(graph, rules, true, 6),
 	}
 	if len(findings.Findings) != 1 {
 		t.Fatalf("expected findings to contain 1 item")
