@@ -1,13 +1,16 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
+
+var roleNamePattern = regexp.MustCompile(`^[A-Za-z0-9+=,.@_-]{1,64}$`)
 
 func runRemediate(args []string, stdout, stderr io.Writer) error {
 	fs := newFlagSet("remediate", stderr)
@@ -39,49 +42,65 @@ func runRemediate(args []string, stdout, stderr io.Writer) error {
 	}
 
 	plan := RemediationPlan{
-		SchemaVersion: "1.0.0",
+		SchemaVersion: "1.1.0",
 		GeneratedAt:   time.Now().UTC(),
 		Items:         make([]RemediationItem, 0, len(findings.Findings)),
 	}
 	hclBlocks := make([]string, 0, len(findings.Findings))
 	for _, finding := range findings.Findings {
-		hcl := buildTerraformPatch(finding)
-		plan.Items = append(plan.Items, RemediationItem{
+		hcl, hclErr := buildTerraformPatch(finding)
+		item := RemediationItem{
 			FindingID: finding.ID,
 			Target:    finding.Target,
 			Summary:   finding.Remediation.Summary,
 			Kind:      finding.Remediation.Kind,
 			Steps:     append([]string(nil), finding.Remediation.Suggested...),
 			HCL:       hcl,
-		})
-		hclBlocks = append(hclBlocks, hcl)
+		}
+		if hclErr != nil {
+			item.RequiresReview = true
+			item.BlockedReason = hclErr.Error()
+			item.HCL = ""
+		} else {
+			hclBlocks = append(hclBlocks, hcl)
+		}
+		plan.Items = append(plan.Items, item)
 	}
 
-	if err := writeJSON(defaultOutputPath(*outDir, "remediation.json"), plan); err != nil {
+	planPath := defaultOutputPath(*outDir, "remediation.json")
+	if err := writeJSON(planPath, plan); err != nil {
 		return err
 	}
 	tf := strings.Join(hclBlocks, "\n\n")
-	mustWrite(defaultOutputPath(*outDir, "panoptes_patches.tf"), []byte(tf+"\n"))
-	_, _ = fmt.Fprintf(stdout, "wrote %s\n", filepath.Join(*outDir, "remediation.json"))
-	_, _ = fmt.Fprintf(stdout, "wrote %s\n", filepath.Join(*outDir, "panoptes_patches.tf"))
+	if tf == "" {
+		tf = "# No applyable Terraform was generated. Review remediation.json."
+	}
+	tfPath := defaultOutputPath(*outDir, "panoptes_patches.tf")
+	if err := os.WriteFile(tfPath, []byte(tf+"\n"), 0644); err != nil {
+		return fmt.Errorf("write %s: %w", tfPath, err)
+	}
+	_, _ = fmt.Fprintf(stdout, "wrote %s\n", planPath)
+	_, _ = fmt.Fprintf(stdout, "wrote %s\n", tfPath)
 	return nil
 }
 
-func buildTerraformPatch(finding Finding) string {
+func buildTerraformPatch(finding Finding) (string, error) {
 	evidence := finding.Evidence
 	roleName := stringFromAny(evidence["role_name"])
-	if roleName == "" {
-		roleName = finding.Target
-	}
 	orgID := stringFromAny(evidence["org_id"])
-	if orgID == "" {
-		if required, ok := evidence["required_conditions"].(map[string]any); ok {
-			orgID = stringFromAny(required["org_id"])
-		}
-	}
 	trustedPrincipal := stringFromAny(evidence["trusted_principal_arn"])
-	if trustedPrincipal == "" {
-		trustedPrincipal = "arn:aws:iam::<account-id>:role/restricted-principal"
+	missing := []string{}
+	if !roleNamePattern.MatchString(roleName) {
+		missing = append(missing, "a valid role_name")
+	}
+	if !strings.HasPrefix(orgID, "o-") || len(orgID) < 4 {
+		missing = append(missing, "a valid organization id")
+	}
+	if !strings.HasPrefix(trustedPrincipal, "arn:") || strings.Contains(trustedPrincipal, "*") {
+		missing = append(missing, "a specific trusted principal ARN")
+	}
+	if len(missing) > 0 {
+		return "", errors.New("cannot generate Terraform without " + strings.Join(missing, ", "))
 	}
 	resourceName := sanitizeResourceName(roleName)
 	return fmt.Sprintf(`# %s - %s
@@ -112,6 +131,10 @@ data "aws_iam_policy_document" "%s_trust" {
 resource "aws_iam_role" "%s" {
   name               = %q
   assume_role_policy = data.aws_iam_policy_document.%s_trust.json
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
-`, finding.ID, finding.Title, resourceName, trustedPrincipal, orgID, resourceName, roleName, resourceName)
+`, finding.ID, finding.Title, resourceName, trustedPrincipal, orgID, resourceName, roleName, resourceName), nil
 }

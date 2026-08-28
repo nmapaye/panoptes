@@ -76,16 +76,16 @@ type GraphEdge struct {
 }
 
 type DetectionRule struct {
-	ID                     string
-	Title                  string
-	Description            string
-	MatchType              string
-	RequireOrgID           bool
-	RequireMFA             bool
-	RequireSpecificPrincipal bool
-	Severity               string
-	RemediationKind        string
-	RemediationSteps       []string
+	ID                       string   `yaml:"id"`
+	Title                    string   `yaml:"title"`
+	Description              string   `yaml:"description"`
+	MatchType                string   `yaml:"match_type"`
+	RequireOrgID             bool     `yaml:"require_org_id"`
+	RequireMFA               bool     `yaml:"require_mfa"`
+	RequireSpecificPrincipal bool     `yaml:"require_specific_principal"`
+	Severity                 string   `yaml:"severity"`
+	RemediationKind          string   `yaml:"remediation_kind"`
+	RemediationSteps         []string `yaml:"remediation_steps"`
 }
 
 type Finding struct {
@@ -120,10 +120,12 @@ type RemediationPlan struct {
 }
 
 type RemediationItem struct {
-	FindingID string   `json:"finding_id"`
-	Target    string   `json:"target"`
-	Summary   string   `json:"summary"`
-	Kind      string   `json:"kind"`
-	Steps     []string `json:"steps,omitempty"`
-	HCL       string   `json:"hcl"`
+	FindingID      string   `json:"finding_id"`
+	Target         string   `json:"target"`
+	Summary        string   `json:"summary"`
+	Kind           string   `json:"kind"`
+	Steps          []string `json:"steps,omitempty"`
+	HCL            string   `json:"hcl,omitempty"`
+	RequiresReview bool     `json:"requires_review,omitempty"`
+	BlockedReason  string   `json:"blocked_reason,omitempty"`
 }

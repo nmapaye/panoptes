@@ -1,27 +1,42 @@
 package cli
 
 import (
-	"bufio"
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
+
+var ruleIDPattern = regexp.MustCompile(`^[A-Z0-9][A-Z0-9_-]{2,63}$`)
 
 func loadRules(dir string) ([]DetectionRule, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 	rules := make([]DetectionRule, 0, len(entries))
+	seen := map[string]string{}
 	for _, entry := range entries {
-		if entry.IsDir() || !(strings.HasSuffix(entry.Name(), ".yaml") || strings.HasSuffix(entry.Name(), ".yml")) {
+		if entry.IsDir() || (!strings.HasSuffix(entry.Name(), ".yaml") && !strings.HasSuffix(entry.Name(), ".yml")) {
 			continue
 		}
-		rule, err := parseRule(filepath.Join(dir, entry.Name()))
+		path := filepath.Join(dir, entry.Name())
+		rule, err := parseRule(path)
 		if err != nil {
 			return nil, err
 		}
+		if previous, exists := seen[rule.ID]; exists {
+			return nil, fmt.Errorf("duplicate rule id %q in %s and %s", rule.ID, previous, path)
+		}
+		seen[rule.ID] = path
 		rules = append(rules, rule)
 	}
 	if len(rules) == 0 {
@@ -31,69 +46,55 @@ func loadRules(dir string) ([]DetectionRule, error) {
 }
 
 func parseRule(path string) (DetectionRule, error) {
-	file, err := os.Open(path)
+	contents, err := os.ReadFile(path)
 	if err != nil {
 		return DetectionRule{}, err
 	}
-	defer file.Close()
 
-	rule := DetectionRule{}
-	currentList := ""
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if strings.HasPrefix(line, "- ") {
-			item := strings.TrimSpace(strings.TrimPrefix(line, "- "))
-			if currentList == "remediation_steps" {
-				rule.RemediationSteps = append(rule.RemediationSteps, item)
-			}
-			continue
-		}
-
-		currentList = ""
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		key := strings.TrimSpace(parts[0])
-		value := strings.Trim(strings.TrimSpace(parts[1]), `"`)
-		switch key {
-		case "id":
-			rule.ID = value
-		case "title":
-			rule.Title = value
-		case "description":
-			rule.Description = value
-		case "match_type":
-			rule.MatchType = value
-		case "require_org_id":
-			rule.RequireOrgID = parseBoolString(value)
-		case "require_mfa":
-			rule.RequireMFA = parseBoolString(value)
-		case "require_specific_principal":
-			rule.RequireSpecificPrincipal = parseBoolString(value)
-		case "severity":
-			rule.Severity = value
-		case "remediation_kind":
-			rule.RemediationKind = value
-		case "remediation_steps":
-			currentList = key
-		}
+	decoder := yaml.NewDecoder(bytes.NewReader(contents))
+	decoder.KnownFields(true)
+	var rule DetectionRule
+	if err := decoder.Decode(&rule); err != nil {
+		return DetectionRule{}, fmt.Errorf("parse rule %s: %w", path, err)
 	}
-	if err := scanner.Err(); err != nil {
-		return DetectionRule{}, err
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return DetectionRule{}, fmt.Errorf("rule %s contains multiple YAML documents", path)
+		}
+		return DetectionRule{}, fmt.Errorf("parse rule %s: %w", path, err)
 	}
-	if rule.ID == "" || rule.Title == "" || rule.MatchType == "" {
-		return DetectionRule{}, fmt.Errorf("rule %s is missing required fields", path)
-	}
-	if rule.Severity == "" {
-		rule.Severity = "high"
-	}
-	if rule.RemediationKind == "" {
-		rule.RemediationKind = "restrict_assume_role"
+	if err := validateRule(rule); err != nil {
+		return DetectionRule{}, fmt.Errorf("rule %s: %w", path, err)
 	}
 	return rule, nil
+}
+
+func validateRule(rule DetectionRule) error {
+	if !ruleIDPattern.MatchString(rule.ID) {
+		return errors.New("id must contain 3 to 64 uppercase letters, digits, underscores, or hyphens")
+	}
+	if strings.TrimSpace(rule.Title) == "" || strings.TrimSpace(rule.Description) == "" {
+		return errors.New("title and description are required")
+	}
+	if rule.MatchType != "CanAssume" {
+		return fmt.Errorf("unsupported match_type %q", rule.MatchType)
+	}
+	if !rule.RequireOrgID && !rule.RequireMFA && !rule.RequireSpecificPrincipal {
+		return errors.New("at least one trust requirement must be enabled")
+	}
+	switch rule.Severity {
+	case "critical", "high", "medium", "low":
+	default:
+		return fmt.Errorf("unsupported severity %q", rule.Severity)
+	}
+	if strings.TrimSpace(rule.RemediationKind) == "" || len(rule.RemediationSteps) == 0 {
+		return errors.New("remediation_kind and remediation_steps are required")
+	}
+	for _, step := range rule.RemediationSteps {
+		if strings.TrimSpace(step) == "" {
+			return errors.New("remediation steps cannot be empty")
+		}
+	}
+	return nil
 }

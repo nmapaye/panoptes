@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 )
 
@@ -58,19 +57,14 @@ func printUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  remediate <findings.json> [--emit terraform_out]")
 }
 
-func mustWrite(path string, data []byte) {
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "write %s: %v\n", path, err)
-		os.Exit(1)
-	}
-}
-
 func writeJSON(path string, v any) error {
 	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
-	mustWrite(path, b)
+	if err := os.WriteFile(path, append(b, '\n'), 0644); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
 	return nil
 }
 
@@ -158,63 +152,6 @@ func stringFromAny(value any) string {
 	}
 }
 
-func stringSliceFromAny(value any) []string {
-	switch v := value.(type) {
-	case []string:
-		return append([]string(nil), v...)
-	case []any:
-		out := make([]string, 0, len(v))
-		for _, item := range v {
-			if s, ok := item.(string); ok {
-				out = append(out, s)
-			}
-		}
-		return out
-	default:
-		return nil
-	}
-}
-
-func stringMapFromAny(value any) map[string]string {
-	switch v := value.(type) {
-	case map[string]string:
-		out := make(map[string]string, len(v))
-		for key, val := range v {
-			out[key] = val
-		}
-		return out
-	case map[string]any:
-		out := map[string]string{}
-		for key, val := range v {
-			if s, ok := val.(string); ok {
-				out[key] = s
-			}
-		}
-		return out
-	default:
-		return map[string]string{}
-	}
-}
-
-func stringSliceMapFromAny(value any) map[string][]string {
-	switch v := value.(type) {
-	case map[string][]string:
-		out := make(map[string][]string, len(v))
-		for key, val := range v {
-			out[key] = append([]string(nil), val...)
-		}
-		return out
-	case map[string]any:
-		out := map[string][]string{}
-		for key, val := range v {
-			out[key] = stringSliceFromAny(val)
-		}
-		return out
-	default:
-		return map[string][]string{}
-	}
-}
-
 func severityScore(severity string, admin bool) float64 {
 	score := map[string]float64{
 		"critical": 0.98,
@@ -252,11 +189,6 @@ func sanitizeResourceName(value string) string {
 		return "panoptes_target"
 	}
 	return b.String()
-}
-
-func parseBoolString(value string) bool {
-	parsed, err := strconv.ParseBool(strings.TrimSpace(value))
-	return err == nil && parsed
 }
 
 func sortedKeys[K ~string, V any](m map[K]V) []K {
