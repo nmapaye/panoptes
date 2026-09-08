@@ -24,7 +24,7 @@
   "$defs": {
     "item": {
       "type": "object",
-      "required": ["finding_id", "target", "summary", "kind", "hcl"],
+      "required": ["finding_id", "target", "summary", "kind"],
       "properties": {
         "finding_id": {
           "type": "string"
@@ -45,10 +45,36 @@
           }
         },
         "hcl": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
+        },
+        "requires_review": {
+          "type": "boolean"
+        },
+        "blocked_reason": {
+          "type": "string",
+          "minLength": 1
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": ["hcl"],
+          "not": {
+            "anyOf": [
+              { "required": ["requires_review"] },
+              { "required": ["blocked_reason"] }
+            ]
+          }
+        },
+        {
+          "required": ["requires_review", "blocked_reason"],
+          "properties": {
+            "requires_review": { "const": true }
+          },
+          "not": { "required": ["hcl"] }
+        }
+      ]
     }
   }
 }

@@ -10,7 +10,17 @@ import (
 	"time"
 )
 
-var roleNamePattern = regexp.MustCompile(`^[A-Za-z0-9+=,.@_-]{1,64}$`)
+var (
+	roleNamePattern  = regexp.MustCompile(`^[A-Za-z0-9+=,.@_-]{1,64}$`)
+	orgIDPattern     = regexp.MustCompile(`^o-[a-z0-9]{10,32}$`)
+	accountIDPattern = regexp.MustCompile(`^[0-9]{12}$`)
+)
+
+var supportedARNPartitions = map[string]struct{}{
+	"aws":        {},
+	"aws-cn":     {},
+	"aws-us-gov": {},
+}
 
 func runRemediate(args []string, stdout, stderr io.Writer) error {
 	fs := newFlagSet("remediate", stderr)
@@ -93,10 +103,10 @@ func buildTerraformPatch(finding Finding) (string, error) {
 	if !roleNamePattern.MatchString(roleName) {
 		missing = append(missing, "a valid role_name")
 	}
-	if !strings.HasPrefix(orgID, "o-") || len(orgID) < 4 {
+	if !orgIDPattern.MatchString(orgID) {
 		missing = append(missing, "a valid organization id")
 	}
-	if !strings.HasPrefix(trustedPrincipal, "arn:") || strings.Contains(trustedPrincipal, "*") {
+	if !validTrustedPrincipalARN(trustedPrincipal) {
 		missing = append(missing, "a specific trusted principal ARN")
 	}
 	if len(missing) > 0 {
@@ -137,4 +147,33 @@ resource "aws_iam_role" "%s" {
   }
 }
 `, finding.ID, finding.Title, resourceName, trustedPrincipal, orgID, resourceName, roleName, resourceName), nil
+}
+
+func validTrustedPrincipalARN(value string) bool {
+	if strings.ContainsAny(value, "*?") {
+		return false
+	}
+	parts := strings.SplitN(value, ":", 6)
+	if len(parts) != 6 || parts[0] != "arn" || parts[2] != "iam" || parts[3] != "" {
+		return false
+	}
+	if _, ok := supportedARNPartitions[parts[1]]; !ok {
+		return false
+	}
+	if !accountIDPattern.MatchString(parts[4]) {
+		return false
+	}
+	if parts[5] == "root" {
+		return true
+	}
+	kind, path, ok := strings.Cut(parts[5], "/")
+	if !ok || (kind != "role" && kind != "user") || path == "" || len(path) > 512 {
+		return false
+	}
+	for _, component := range strings.Split(path, "/") {
+		if !roleNamePattern.MatchString(component) {
+			return false
+		}
+	}
+	return true
 }
